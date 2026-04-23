@@ -1,0 +1,1 @@
+{"version":1,"functions":{"/api/interactions":{},"/api/people/[id]":{},"/api/people":{},"/api/interactions/[id]":{},"/api/relationships":{},"/api/strategies/[id]":{},"/api/strategies":{"maxDuration":300},"/api/strategies/[id]/rate":{}}}

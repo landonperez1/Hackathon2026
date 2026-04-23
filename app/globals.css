@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    @apply bg-bg text-slate-100 antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  * {
+    border-color: theme("colors.border.DEFAULT");
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-raised border border-border rounded-xl;
+  }
+
+  .card-elevated {
+    @apply bg-bg-elevated border border-border rounded-xl;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg
+           text-sm font-medium transition-colors disabled:opacity-50
+           disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent hover:bg-accent-hover text-white;
+  }
+
+  .btn-secondary {
+    @apply btn bg-bg-elevated hover:bg-bg-hover text-slate-200 border border-border;
+  }
+
+  .btn-ghost {
+    @apply btn hover:bg-bg-hover text-slate-300;
+  }
+
+  .input {
+    @apply w-full bg-bg-elevated border border-border rounded-lg px-3 py-2
+           text-sm text-slate-100 placeholder:text-slate-500
+           focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent
+           transition-colors;
+  }
+
+  .textarea {
+    @apply input resize-none font-mono;
+  }
+
+  .label {
+    @apply text-xs font-medium text-slate-400 uppercase tracking-wider;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs
+           font-medium bg-bg-hover border border-border text-slate-300;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: theme("colors.bg.DEFAULT");
+}
+::-webkit-scrollbar-thumb {
+  background: theme("colors.bg.hover");
+  border-radius: 6px;
+  border: 2px solid theme("colors.bg.DEFAULT");
+}
+::-webkit-scrollbar-thumb:hover {
+  background: theme("colors.border.DEFAULT");
+}
