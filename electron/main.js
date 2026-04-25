@@ -12,17 +12,51 @@ const PORT = process.env.PROJECTMIND_PORT
   : 3737;
 const APP_URL = `http://127.0.0.1:${PORT}`;
 const IS_DEV = process.env.ELECTRON_DEV === "1";
+const SERVER_TIMEOUT_MS = 60_000;
 
 let serverProcess = null;
 let mainWindow = null;
+let serverExitInfo = null;
+const serverOutputBuffer = [];
 
 const userDataDir = app.getPath("userData");
 const envPath = path.join(userDataDir, ".env");
 const dataDir = path.join(userDataDir, "data");
+const logsDir = path.join(userDataDir, "logs");
+const launcherLogPath = path.join(logsDir, "launcher.log");
+const serverLogPath = path.join(logsDir, "server.log");
 
-// Ensure user data dir for SQLite + uploaded files lives in a writable place
-// outside the read-only packaged resources.
 fs.mkdirSync(dataDir, { recursive: true });
+fs.mkdirSync(logsDir, { recursive: true });
+
+function timestamp() {
+  return new Date().toISOString();
+}
+
+function log(line) {
+  const stamped = `[${timestamp()}] ${line}\n`;
+  try {
+    fs.appendFileSync(launcherLogPath, stamped);
+  } catch {}
+  try {
+    process.stdout.write(stamped);
+  } catch {}
+}
+
+try {
+  if (
+    fs.existsSync(launcherLogPath) &&
+    fs.statSync(launcherLogPath).size > 256_000
+  ) {
+    fs.renameSync(launcherLogPath, launcherLogPath + ".old");
+  }
+  fs.writeFileSync(serverLogPath, "");
+} catch {}
+
+log(
+  `launcher start: pid=${process.pid} packaged=${app.isPackaged} platform=${process.platform} arch=${process.arch} version=${app.getVersion()}`
+);
+log(`userData=${userDataDir}`);
 
 function readEnvFile() {
   if (!fs.existsSync(envPath)) return {};
@@ -88,17 +122,56 @@ async function ensureApiKey() {
   return key;
 }
 
-function waitForServer(timeoutMs = 30000) {
+function recordServerOutput(prefix, data) {
+  const text = data.toString();
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line) continue;
+    const stamped = `[${timestamp()}] ${prefix} ${line}\n`;
+    try {
+      fs.appendFileSync(serverLogPath, stamped);
+    } catch {}
+    serverOutputBuffer.push(line);
+    if (serverOutputBuffer.length > 200) serverOutputBuffer.shift();
+    try {
+      process.stdout.write(stamped);
+    } catch {}
+  }
+}
+
+function waitForServer(timeoutMs) {
   const start = Date.now();
+  let attempts = 0;
   return new Promise((resolve, reject) => {
     const tick = () => {
+      attempts++;
+      if (serverExitInfo) {
+        const tail = serverOutputBuffer.slice(-15).join("\n");
+        return reject(
+          new Error(
+            `Server crashed before becoming ready (exit=${serverExitInfo.code}, signal=${serverExitInfo.signal}).\n\nLast output:\n${
+              tail || "(no output)"
+            }\n\nFull log: ${serverLogPath}`
+          )
+        );
+      }
       const req = http.get(APP_URL, (res) => {
         res.resume();
+        log(`server ready after ${attempts} attempts (${Date.now() - start}ms)`);
         resolve();
       });
       req.on("error", () => {
         if (Date.now() - start > timeoutMs) {
-          reject(new Error("Timed out waiting for ProjectMind server"));
+          const tail = serverOutputBuffer.slice(-15).join("\n");
+          reject(
+            new Error(
+              `Timed out after ${Math.round(
+                timeoutMs / 1000
+              )}s waiting for ${APP_URL}.\n\nLast output:\n${
+                tail || "(no output captured — server probably never started)"
+              }\n\nFull log: ${serverLogPath}`
+            )
+          );
         } else {
           setTimeout(tick, 250);
         }
@@ -110,23 +183,40 @@ function waitForServer(timeoutMs = 30000) {
 
 async function startServer(apiKey) {
   if (IS_DEV) {
-    // In dev mode the developer runs `next dev` separately; just wait for it.
-    await waitForServer(60000);
+    log("dev mode: waiting for next dev server");
+    await waitForServer(SERVER_TIMEOUT_MS);
     return;
   }
 
-  // In packaged builds the standalone bundle lives in resources/app.
-  // Outside packaging (running `electron .` after `next build`) it's at .next/standalone.
   const standaloneDir = app.isPackaged
     ? path.join(process.resourcesPath, "app")
     : path.join(__dirname, "..", ".next", "standalone");
   const serverScript = path.join(standaloneDir, "server.js");
 
+  log(`spawning server: script=${serverScript}`);
+  log(`spawn cwd=${standaloneDir}`);
+  log(`spawn execPath=${process.execPath}`);
+
   if (!fs.existsSync(serverScript)) {
     throw new Error(
-      `Could not find Next.js standalone server at ${serverScript}. Run \`npm run build\` first.`
+      `server.js not found at ${serverScript}.\nReinstall ProjectMind.`
     );
   }
+
+  // Pre-flight: confirm the SQLite WASM binary made it into the bundle.
+  const wasmPath = path.join(
+    standaloneDir,
+    "node_modules",
+    "node-sqlite3-wasm",
+    "dist",
+    "node-sqlite3-wasm.wasm"
+  );
+  if (!fs.existsSync(wasmPath)) {
+    throw new Error(
+      `Required SQLite WASM file is missing: ${wasmPath}\nReinstall ProjectMind.`
+    );
+  }
+  log(`wasm ok: ${wasmPath}`);
 
   serverProcess = spawn(process.execPath, [serverScript], {
     cwd: standaloneDir,
@@ -137,31 +227,52 @@ async function startServer(apiKey) {
       PORT: String(PORT),
       HOSTNAME: "127.0.0.1",
       ANTHROPIC_API_KEY: apiKey,
-      // Persist SQLite DB and uploaded files in the user-data directory so they
-      // survive app updates and live in a writable location.
       PROJECTMIND_DATA_DIR: dataDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
 
-  serverProcess.stdout.on("data", (d) =>
-    process.stdout.write(`[server] ${d}`)
-  );
-  serverProcess.stderr.on("data", (d) =>
-    process.stderr.write(`[server] ${d}`)
-  );
+  log(`server pid=${serverProcess.pid}`);
 
-  serverProcess.on("exit", (code) => {
+  serverProcess.stdout.on("data", (d) => recordServerOutput("[stdout]", d));
+  serverProcess.stderr.on("data", (d) => recordServerOutput("[stderr]", d));
+
+  serverProcess.on("error", (err) => {
+    log(`server spawn error: ${err.message}`);
+  });
+
+  serverProcess.on("exit", (code, signal) => {
+    serverExitInfo = { code, signal };
+    log(`server process exited: code=${code} signal=${signal}`);
     serverProcess = null;
-    if (code !== 0 && mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow && !mainWindow.isDestroyed() && code !== 0) {
       dialog.showErrorBox(
         "ProjectMind server stopped",
-        `The embedded server exited with code ${code}.`
+        `Exit code: ${code}.\n\nLog: ${serverLogPath}`
       );
     }
   });
 
-  await waitForServer();
+  await waitForServer(SERVER_TIMEOUT_MS);
+}
+
+function showStartupError(err) {
+  const message = String(err && err.message ? err.message : err);
+  log(`startup failed: ${message}`);
+  const choice = dialog.showMessageBoxSync({
+    type: "error",
+    title: "ProjectMind failed to start",
+    message: "ProjectMind couldn't start its embedded server.",
+    detail: message,
+    buttons: ["Open log folder", "Quit"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (choice === 0) {
+    shell.openPath(logsDir);
+  }
 }
 
 function createWindow() {
@@ -212,6 +323,10 @@ function buildMenu() {
           label: "Open data folder",
           click: () => shell.openPath(dataDir),
         },
+        {
+          label: "Open log folder",
+          click: () => shell.openPath(logsDir),
+        },
         { type: "separator" },
         { role: "quit" },
       ],
@@ -236,7 +351,7 @@ app.whenReady().then(async () => {
     await startServer(apiKey);
     createWindow();
   } catch (err) {
-    dialog.showErrorBox("ProjectMind failed to start", String(err));
+    showStartupError(err);
     app.quit();
   }
 });
