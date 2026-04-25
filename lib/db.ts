@@ -1,4 +1,5 @@
-import Database from "better-sqlite3";
+import { Database } from "node-sqlite3-wasm";
+import type { JSValue } from "node-sqlite3-wasm";
 import path from "path";
 import fs from "fs";
 
@@ -9,13 +10,19 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-let _db: Database.Database | null = null;
+let _db: InstanceType<typeof Database> | null = null;
 
-export function getDb(): Database.Database {
+function bind(obj: Record<string, unknown>): Record<string, JSValue> {
+  return Object.fromEntries(
+    Object.entries(obj).map(([k, v]) => ["@" + k, v as JSValue])
+  );
+}
+
+export function getDb(): InstanceType<typeof Database> {
   if (_db) return _db;
   const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA foreign_keys = ON");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS people (
@@ -194,13 +201,13 @@ function uuid(): string {
 export function listPeople(): Person[] {
   return getDb()
     .prepare("SELECT * FROM people ORDER BY name ASC")
-    .all() as Person[];
+    .all() as unknown as Person[];
 }
 
 export function getPerson(id: string): Person | undefined {
-  return getDb().prepare("SELECT * FROM people WHERE id = ?").get(id) as
-    | Person
-    | undefined;
+  return getDb()
+    .prepare("SELECT * FROM people WHERE id = ?")
+    .get([id]) as unknown as Person | undefined;
 }
 
 export function createPerson(input: {
@@ -227,7 +234,7 @@ export function createPerson(input: {
        (id, name, role, reliability, workload, communication_style, personality_notes, created_at)
        VALUES (@id, @name, @role, @reliability, @workload, @communication_style, @personality_notes, @created_at)`
     )
-    .run(person);
+    .run(bind(person as unknown as Record<string, unknown>));
   return person;
 }
 
@@ -249,12 +256,14 @@ export function updatePerson(
          personality_notes = @personality_notes
        WHERE id = @id`
     )
-    .run(merged);
+    .run(bind(merged as unknown as Record<string, unknown>));
   return merged;
 }
 
 export function deletePerson(id: string): boolean {
-  const info = getDb().prepare("DELETE FROM people WHERE id = ?").run(id);
+  const info = getDb()
+    .prepare("DELETE FROM people WHERE id = ?")
+    .run([id]);
   return info.changes > 0;
 }
 
@@ -263,7 +272,7 @@ export function deletePerson(id: string): boolean {
 export function listInteractions(limit = 200): Interaction[] {
   return getDb()
     .prepare("SELECT * FROM interactions ORDER BY created_at DESC LIMIT ?")
-    .all(limit) as Interaction[];
+    .all([limit]) as unknown as Interaction[];
 }
 
 export function listInteractionsForPerson(personId: string): Interaction[] {
@@ -271,7 +280,7 @@ export function listInteractionsForPerson(personId: string): Interaction[] {
     .prepare(
       "SELECT * FROM interactions WHERE person_id = ? ORDER BY created_at DESC"
     )
-    .all(personId) as Interaction[];
+    .all([personId]) as unknown as Interaction[];
 }
 
 export function createInteraction(input: {
@@ -298,23 +307,30 @@ export function createInteraction(input: {
      (interaction_id, mention_type, target_id)
      VALUES (?, ?, ?)`
   );
-  const tx = db.transaction(() => {
-    insertInteraction.run(interaction);
+
+  db.run("BEGIN");
+  try {
+    insertInteraction.run(
+      bind(interaction as unknown as Record<string, unknown>)
+    );
     if (input.person_id) {
-      insertMention.run(interaction.id, "person", input.person_id);
+      insertMention.run([interaction.id, "person", input.person_id]);
     }
     for (const m of input.mentions ?? []) {
-      insertMention.run(interaction.id, m.type, m.id);
+      insertMention.run([interaction.id, m.type, m.id]);
     }
-  });
-  tx();
+    db.run("COMMIT");
+  } catch (err) {
+    db.run("ROLLBACK");
+    throw err;
+  }
   return interaction;
 }
 
 export function listInteractionMentions(): InteractionMention[] {
   return getDb()
     .prepare("SELECT * FROM interaction_mentions")
-    .all() as InteractionMention[];
+    .all() as unknown as InteractionMention[];
 }
 
 export function listMentionsForInteraction(
@@ -322,11 +338,13 @@ export function listMentionsForInteraction(
 ): InteractionMention[] {
   return getDb()
     .prepare("SELECT * FROM interaction_mentions WHERE interaction_id = ?")
-    .all(interactionId) as InteractionMention[];
+    .all([interactionId]) as unknown as InteractionMention[];
 }
 
 export function deleteInteraction(id: string): boolean {
-  const info = getDb().prepare("DELETE FROM interactions WHERE id = ?").run(id);
+  const info = getDb()
+    .prepare("DELETE FROM interactions WHERE id = ?")
+    .run([id]);
   return info.changes > 0;
 }
 
@@ -339,7 +357,7 @@ function pairKey(a: string, b: string): [string, string] {
 export function listRelationships(): Relationship[] {
   return getDb()
     .prepare("SELECT * FROM relationships")
-    .all() as Relationship[];
+    .all() as unknown as Relationship[];
 }
 
 export function setRelationship(
@@ -360,7 +378,7 @@ export function setRelationship(
        VALUES (@person_a_id, @person_b_id, @strength)
        ON CONFLICT(person_a_id, person_b_id) DO UPDATE SET strength = excluded.strength`
     )
-    .run(rel);
+    .run(bind(rel as unknown as Record<string, unknown>));
   return rel;
 }
 
@@ -373,7 +391,7 @@ export function deleteRelationship(
     .prepare(
       "DELETE FROM relationships WHERE person_a_id = ? AND person_b_id = ?"
     )
-    .run(a, b);
+    .run([a, b]);
   return info.changes > 0;
 }
 
@@ -395,14 +413,14 @@ function rowToStrategy(row: StrategyRow): Strategy {
 export function listStrategies(limit = 50): Strategy[] {
   const rows = getDb()
     .prepare("SELECT * FROM strategies ORDER BY created_at DESC LIMIT ?")
-    .all(limit) as StrategyRow[];
+    .all([limit]) as unknown as StrategyRow[];
   return rows.map(rowToStrategy);
 }
 
 export function getStrategy(id: string): Strategy | undefined {
   const row = getDb()
     .prepare("SELECT * FROM strategies WHERE id = ?")
-    .get(id) as StrategyRow | undefined;
+    .get([id]) as unknown as StrategyRow | undefined;
   return row ? rowToStrategy(row) : undefined;
 }
 
@@ -420,22 +438,23 @@ export function createStrategy(input: {
     created_at: Date.now(),
     completed_at: null,
   };
+  const row = {
+    id: strategy.id,
+    project_description: strategy.project_description,
+    options_json: JSON.stringify(strategy.options),
+    chosen_index: strategy.chosen_index,
+    rating: strategy.rating,
+    feedback: strategy.feedback,
+    created_at: strategy.created_at,
+    completed_at: strategy.completed_at,
+  };
   getDb()
     .prepare(
       `INSERT INTO strategies
        (id, project_description, options_json, chosen_index, rating, feedback, created_at, completed_at)
        VALUES (@id, @project_description, @options_json, @chosen_index, @rating, @feedback, @created_at, @completed_at)`
     )
-    .run({
-      id: strategy.id,
-      project_description: strategy.project_description,
-      options_json: JSON.stringify(strategy.options),
-      chosen_index: strategy.chosen_index,
-      rating: strategy.rating,
-      feedback: strategy.feedback,
-      created_at: strategy.created_at,
-      completed_at: strategy.completed_at,
-    });
+    .run(bind(row as unknown as Record<string, unknown>));
   return strategy;
 }
 
@@ -453,7 +472,7 @@ export function rateStrategy(
        SET chosen_index = ?, rating = ?, feedback = ?, completed_at = ?
        WHERE id = ?`
     )
-    .run(chosenIndex, rating, feedback, Date.now(), id);
+    .run([chosenIndex, rating, feedback, Date.now(), id]);
   return getStrategy(id);
 }
 
@@ -462,7 +481,7 @@ export function listCompletedStrategies(limit = 20): Strategy[] {
     .prepare(
       "SELECT * FROM strategies WHERE rating IS NOT NULL ORDER BY completed_at DESC LIMIT ?"
     )
-    .all(limit) as StrategyRow[];
+    .all([limit]) as unknown as StrategyRow[];
   return rows.map(rowToStrategy);
 }
 
@@ -471,13 +490,13 @@ export function listCompletedStrategies(limit = 20): Strategy[] {
 export function listProjects(): Project[] {
   return getDb()
     .prepare("SELECT * FROM projects ORDER BY created_at DESC")
-    .all() as Project[];
+    .all() as unknown as Project[];
 }
 
 export function getProject(id: string): Project | undefined {
-  return getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as
-    | Project
-    | undefined;
+  return getDb()
+    .prepare("SELECT * FROM projects WHERE id = ?")
+    .get([id]) as unknown as Project | undefined;
 }
 
 export function createProject(input: {
@@ -495,7 +514,7 @@ export function createProject(input: {
       `INSERT INTO projects (id, name, description, created_at)
        VALUES (@id, @name, @description, @created_at)`
     )
-    .run(project);
+    .run(bind(project as unknown as Record<string, unknown>));
   return project;
 }
 
@@ -510,12 +529,14 @@ export function updateProject(
     .prepare(
       `UPDATE projects SET name = @name, description = @description WHERE id = @id`
     )
-    .run(merged);
+    .run(bind(merged as unknown as Record<string, unknown>));
   return merged;
 }
 
 export function deleteProject(id: string): boolean {
-  const info = getDb().prepare("DELETE FROM projects WHERE id = ?").run(id);
+  const info = getDb()
+    .prepare("DELETE FROM projects WHERE id = ?")
+    .run([id]);
   return info.changes > 0;
 }
 
@@ -526,19 +547,19 @@ export function listProjectFiles(projectId: string): ProjectFile[] {
     .prepare(
       "SELECT * FROM project_files WHERE project_id = ? ORDER BY created_at DESC"
     )
-    .all(projectId) as ProjectFile[];
+    .all([projectId]) as unknown as ProjectFile[];
 }
 
 export function listAllFiles(): ProjectFile[] {
   return getDb()
     .prepare("SELECT * FROM project_files ORDER BY created_at DESC")
-    .all() as ProjectFile[];
+    .all() as unknown as ProjectFile[];
 }
 
 export function getProjectFile(id: string): ProjectFile | undefined {
   return getDb()
     .prepare("SELECT * FROM project_files WHERE id = ?")
-    .get(id) as ProjectFile | undefined;
+    .get([id]) as unknown as ProjectFile | undefined;
 }
 
 export function createProjectFile(input: {
@@ -567,7 +588,7 @@ export function createProjectFile(input: {
        (id, project_id, name, notes, storage_path, original_filename, mime_type, size_bytes, created_at)
        VALUES (@id, @project_id, @name, @notes, @storage_path, @original_filename, @mime_type, @size_bytes, @created_at)`
     )
-    .run(file);
+    .run(bind(file as unknown as Record<string, unknown>));
   return file;
 }
 
@@ -580,13 +601,13 @@ export function updateProjectFile(
   const merged = { ...existing, ...patch };
   getDb()
     .prepare(`UPDATE project_files SET name = @name, notes = @notes WHERE id = @id`)
-    .run(merged);
+    .run(bind(merged as unknown as Record<string, unknown>));
   return merged;
 }
 
 export function deleteProjectFile(id: string): ProjectFile | undefined {
   const existing = getProjectFile(id);
   if (!existing) return undefined;
-  getDb().prepare("DELETE FROM project_files WHERE id = ?").run(id);
+  getDb().prepare("DELETE FROM project_files WHERE id = ?").run([id]);
   return existing;
 }
