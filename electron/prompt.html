@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ProjectMind setup</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #0a0a0f;
+        color: #e2e8f0;
+        margin: 0;
+        padding: 28px;
+      }
+      h1 { font-size: 16px; font-weight: 600; margin: 0 0 6px; color: #f1f5f9; }
+      p { font-size: 12.5px; line-height: 1.5; color: #94a3b8; margin: 0 0 16px; }
+      a { color: #9177ff; }
+      label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+      input {
+        width: 100%;
+        padding: 9px 11px;
+        margin-top: 6px;
+        box-sizing: border-box;
+        background: #1a1a24;
+        color: #e2e8f0;
+        border: 1px solid #2a2a38;
+        border-radius: 6px;
+        font-size: 13px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        outline: none;
+      }
+      input:focus { border-color: #7c5cff; }
+      .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+      button {
+        background: #7c5cff;
+        color: white;
+        border: 0;
+        padding: 9px 18px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      button:hover { background: #9177ff; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+  </head>
+  <body>
+    <h1>Anthropic API key</h1>
+    <p>
+      ProjectMind needs an Anthropic API key to generate strategies. Get one at
+      <a href="https://console.anthropic.com" target="_blank" rel="noreferrer">console.anthropic.com</a>.
+      The key is stored locally on your machine.
+    </p>
+    <label for="key">API key</label>
+    <input id="key" type="password" placeholder="sk-ant-..." autofocus autocomplete="off" />
+    <div class="row">
+      <button id="submit" disabled>Continue</button>
+    </div>
+
+    <script>
+      const input = document.getElementById("key");
+      const submit = document.getElementById("submit");
+      input.addEventListener("input", () => {
+        submit.disabled = input.value.trim().length < 10;
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !submit.disabled) submit.click();
+      });
+      submit.addEventListener("click", () => {
+        const v = input.value.trim();
+        if (v) window.bridge.submit(v);
+      });
+    </script>
+  </body>
+</html>

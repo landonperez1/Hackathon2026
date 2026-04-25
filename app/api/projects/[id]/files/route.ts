@@ -9,7 +9,9 @@ import {
 
 export const runtime = "nodejs";
 
-const FILES_DIR = path.join(process.cwd(), "data", "files");
+const DATA_DIR =
+  process.env.PROJECTMIND_DATA_DIR ?? path.join(process.cwd(), "data");
+const FILES_DIR = path.join(DATA_DIR, "files");
 
 async function ensureFilesDir() {
   await fs.mkdir(FILES_DIR, { recursive: true });

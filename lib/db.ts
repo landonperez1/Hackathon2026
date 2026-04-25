@@ -3,7 +3,8 @@ import type { JSValue } from "node-sqlite3-wasm";
 import path from "path";
 import fs from "fs";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR =
+  process.env.PROJECTMIND_DATA_DIR ?? path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "projectmind.db");
 
 if (!fs.existsSync(DATA_DIR)) {

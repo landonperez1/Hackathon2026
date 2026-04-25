@@ -5,7 +5,8 @@ import { getProjectFile } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR =
+  process.env.PROJECTMIND_DATA_DIR ?? path.join(process.cwd(), "data");
 
 export async function GET(
   _req: Request,
