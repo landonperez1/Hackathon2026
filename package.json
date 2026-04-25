@@ -56,7 +56,8 @@
         "from": ".next/standalone",
         "to": "app",
         "filter": [
-          "**/*"
+          "**/*",
+          "**/*.wasm"
         ]
       },
       {
@@ -72,6 +73,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "node_modules/node-sqlite3-wasm/dist/node-sqlite3-wasm.wasm",
+        "to": "app/node_modules/node-sqlite3-wasm/dist/node-sqlite3-wasm.wasm"
       }
     ],
     "win": {
