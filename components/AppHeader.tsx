@@ -57,8 +57,19 @@ export default function AppHeader({ stats }: Props) {
         </nav>
       </div>
 
-      <div className="flex items-center gap-1 text-xs text-slate-400">
-        {stats}
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1 text-xs text-slate-400">
+          {stats}
+        </div>
+        {pathname.startsWith("/projects") ? (
+          <Link href="/" className="btn-secondary text-xs">
+            ← Back to Network
+          </Link>
+        ) : (
+          <Link href="/projects" className="btn-primary text-xs">
+            📁 Go to Projects →
+          </Link>
+        )}
       </div>
     </header>
   );
