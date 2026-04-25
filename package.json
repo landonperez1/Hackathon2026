@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "AI-powered project management that learns your professional network.",
+  "author": "ProjectMind",
   "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
@@ -95,7 +96,7 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDir": true,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ProjectMind"
