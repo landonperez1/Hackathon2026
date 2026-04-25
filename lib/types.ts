@@ -4,4 +4,8 @@ export type {
   Relationship,
   Strategy,
   StrategyOption,
+  Project,
+  ProjectFile,
+  InteractionMention,
+  MentionType,
 } from "./db";

@@ -1,19 +1,53 @@
 "use client";
 
-import { useState } from "react";
-import type { Interaction, Person } from "@/lib/types";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from "react";
+import type {
+  Interaction,
+  MentionType,
+  Person,
+  Project,
+  ProjectFile,
+} from "@/lib/types";
+
+type MentionCandidate = {
+  type: MentionType;
+  id: string;
+  label: string;
+  sublabel?: string;
+  token: string;
+};
 
 type Props = {
   interactions: Interaction[];
   people: Person[];
+  projects: Project[];
+  files: ProjectFile[];
   defaultPersonId?: string | null;
-  onCreated: (i: Interaction) => void;
+  onCreated: (i: Interaction, mentions: Array<{ type: MentionType; id: string }>) => void;
   onDeleted: (id: string) => void;
 };
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48) || "item";
+}
 
 export default function InteractionLog({
   interactions,
   people,
+  projects,
+  files,
   defaultPersonId,
   onCreated,
   onDeleted,
@@ -22,11 +56,141 @@ export default function InteractionLog({
   const [content, setContent] = useState("");
   const [projectContext, setProjectContext] = useState("");
   const [saving, setSaving] = useState(false);
+  const [committedMentions, setCommittedMentions] = useState<
+    MentionCandidate[]
+  >([]);
+
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionAnchor, setMentionAnchor] = useState<number | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const candidates = useMemo<MentionCandidate[]>(() => {
+    const list: MentionCandidate[] = [];
+    for (const p of people) {
+      list.push({
+        type: "person",
+        id: p.id,
+        label: p.name,
+        sublabel: p.role || "person",
+        token: slugify(p.name),
+      });
+    }
+    for (const pr of projects) {
+      list.push({
+        type: "project",
+        id: pr.id,
+        label: pr.name,
+        sublabel: "project",
+        token: slugify(pr.name),
+      });
+    }
+    for (const f of files) {
+      const projName = projects.find((p) => p.id === f.project_id)?.name ?? "";
+      list.push({
+        type: "file",
+        id: f.id,
+        label: f.name,
+        sublabel: `file · ${projName}`,
+        token: `${slugify(projName)}/${slugify(f.name)}`,
+      });
+    }
+    return list;
+  }, [people, projects, files]);
+
+  const filtered = useMemo(() => {
+    const q = mentionQuery.toLowerCase();
+    if (!q) return candidates.slice(0, 8);
+    return candidates
+      .filter(
+        (c) =>
+          c.label.toLowerCase().includes(q) ||
+          c.token.toLowerCase().includes(q)
+      )
+      .slice(0, 8);
+  }, [candidates, mentionQuery]);
+
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [mentionQuery, mentionOpen]);
+
+  function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
+    const value = e.target.value;
+    setContent(value);
+    const caret = e.target.selectionStart ?? value.length;
+    // look back to find @ trigger
+    let i = caret - 1;
+    while (i >= 0) {
+      const ch = value[i];
+      if (ch === "@") {
+        const before = i === 0 ? " " : value[i - 1];
+        if (before === " " || before === "\n" || i === 0) {
+          const query = value.slice(i + 1, caret);
+          if (/^[a-zA-Z0-9_\-\/]*$/.test(query)) {
+            setMentionAnchor(i);
+            setMentionQuery(query);
+            setMentionOpen(true);
+            return;
+          }
+        }
+        break;
+      }
+      if (ch === " " || ch === "\n") break;
+      i--;
+    }
+    setMentionOpen(false);
+    setMentionAnchor(null);
+    setMentionQuery("");
+  }
+
+  function selectCandidate(c: MentionCandidate) {
+    if (mentionAnchor === null || !textareaRef.current) return;
+    const ta = textareaRef.current;
+    const caret = ta.selectionStart ?? content.length;
+    const before = content.slice(0, mentionAnchor);
+    const after = content.slice(caret);
+    const inserted = `@${c.token} `;
+    const newValue = before + inserted + after;
+    setContent(newValue);
+    setCommittedMentions((prev) => {
+      if (prev.find((x) => x.type === c.type && x.id === c.id)) return prev;
+      return [...prev, c];
+    });
+    setMentionOpen(false);
+    setMentionAnchor(null);
+    setMentionQuery("");
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = before.length + inserted.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (!mentionOpen || filtered.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => (i + 1) % filtered.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => (i - 1 + filtered.length) % filtered.length);
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      selectCandidate(filtered[activeIdx]);
+    } else if (e.key === "Escape") {
+      setMentionOpen(false);
+    }
+  }
 
   async function submit() {
     if (!content.trim()) return;
     setSaving(true);
     try {
+      const usedMentions = committedMentions.filter((m) =>
+        content.includes(`@${m.token}`)
+      );
       const res = await fetch("/api/interactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -34,13 +198,18 @@ export default function InteractionLog({
           person_id: personId || null,
           content,
           project_context: projectContext,
+          mentions: usedMentions.map((m) => ({ type: m.type, id: m.id })),
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        onCreated(data.interaction);
+        onCreated(
+          data.interaction,
+          usedMentions.map((m) => ({ type: m.type, id: m.id }))
+        );
         setContent("");
         setProjectContext("");
+        setCommittedMentions([]);
       }
     } finally {
       setSaving(false);
@@ -78,14 +247,75 @@ export default function InteractionLog({
             onChange={(e) => setProjectContext(e.target.value)}
           />
         </div>
-        <textarea
-          className="textarea"
-          rows={3}
-          placeholder="What happened? e.g., 'Priya pushed back on the Q3 scope — worried about tech-debt backlog. Agreed to sync Thursday.'"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-        />
-        <div className="flex justify-end">
+
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            className="textarea"
+            rows={3}
+            placeholder="What happened? Use @ to link people, projects, or files."
+            value={content}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+          />
+
+          {mentionOpen && filtered.length > 0 ? (
+            <div className="absolute left-0 right-0 top-full mt-1 z-20 card-elevated max-h-64 overflow-y-auto shadow-xl">
+              {filtered.map((c, i) => (
+                <button
+                  key={`${c.type}-${c.id}`}
+                  onClick={() => selectCandidate(c)}
+                  onMouseEnter={() => setActiveIdx(i)}
+                  className={`w-full text-left px-3 py-2 border-b border-border-muted last:border-b-0 flex items-center justify-between gap-2 ${
+                    i === activeIdx ? "bg-bg-hover" : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs">
+                      {c.type === "person"
+                        ? "👤"
+                        : c.type === "project"
+                        ? "📁"
+                        : "📄"}
+                    </span>
+                    <span className="text-sm text-slate-100 truncate">
+                      {c.label}
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-500 flex-shrink-0">
+                    {c.sublabel}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {committedMentions.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {committedMentions
+              .filter((m) => content.includes(`@${m.token}`))
+              .map((m) => (
+                <span
+                  key={`${m.type}-${m.id}`}
+                  className="chip bg-accent-muted border-accent text-white"
+                >
+                  {m.type === "person"
+                    ? "👤"
+                    : m.type === "project"
+                    ? "📁"
+                    : "📄"}{" "}
+                  {m.label}
+                </span>
+              ))}
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-slate-500">
+            Tip: type <span className="font-mono text-slate-400">@</span> to
+            link people, projects, or files.
+          </div>
           <button
             className="btn-primary"
             onClick={submit}
@@ -106,7 +336,7 @@ export default function InteractionLog({
           interactions.map((i) => (
             <div key={i.id} className="card p-3 text-sm">
               <div className="flex items-start justify-between gap-2 mb-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="chip">{personName(i.person_id)}</span>
                   {i.project_context ? (
                     <span className="chip">{i.project_context}</span>
@@ -123,8 +353,8 @@ export default function InteractionLog({
                   </button>
                 </div>
               </div>
-              <div className="text-slate-200 whitespace-pre-wrap">
-                {i.content}
+              <div className="text-slate-200 whitespace-pre-wrap break-words">
+                {renderWithMentions(i.content, candidates)}
               </div>
             </div>
           ))
@@ -132,4 +362,54 @@ export default function InteractionLog({
       </div>
     </div>
   );
+}
+
+function renderWithMentions(
+  text: string,
+  candidates: MentionCandidate[]
+): React.ReactNode {
+  if (!text.includes("@")) return text;
+  const tokens = candidates
+    .slice()
+    .sort((a, b) => b.token.length - a.token.length);
+  const parts: Array<{ text: string; mention?: MentionCandidate }> = [
+    { text },
+  ];
+  for (const c of tokens) {
+    const needle = `@${c.token}`;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.mention || !part.text.includes(needle)) continue;
+      const segments: Array<{ text: string; mention?: MentionCandidate }> = [];
+      let remaining = part.text;
+      let idx: number;
+      while ((idx = remaining.indexOf(needle)) !== -1) {
+        if (idx > 0) segments.push({ text: remaining.slice(0, idx) });
+        segments.push({ text: needle, mention: c });
+        remaining = remaining.slice(idx + needle.length);
+      }
+      if (remaining) segments.push({ text: remaining });
+      parts.splice(i, 1, ...segments);
+      i += segments.length - 1;
+    }
+  }
+  return parts.map((p, i) => {
+    if (p.mention) {
+      const icon =
+        p.mention.type === "person"
+          ? "👤"
+          : p.mention.type === "project"
+          ? "📁"
+          : "📄";
+      return (
+        <span
+          key={i}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-muted border border-accent text-white text-xs font-medium mx-0.5"
+        >
+          {icon} {p.mention.label}
+        </span>
+      );
+    }
+    return <Fragment key={i}>{p.text}</Fragment>;
+  });
 }

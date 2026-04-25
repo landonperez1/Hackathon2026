@@ -58,9 +58,39 @@ export function getDb(): Database.Database {
       completed_at INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS project_files (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      storage_path TEXT,
+      original_filename TEXT,
+      mime_type TEXT,
+      size_bytes INTEGER,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS interaction_mentions (
+      interaction_id TEXT NOT NULL,
+      mention_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      PRIMARY KEY (interaction_id, mention_type, target_id),
+      FOREIGN KEY (interaction_id) REFERENCES interactions(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_interactions_person ON interactions(person_id);
     CREATE INDEX IF NOT EXISTS idx_interactions_created ON interactions(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_strategies_created ON strategies(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
+    CREATE INDEX IF NOT EXISTS idx_mentions_target ON interaction_mentions(mention_type, target_id);
   `);
 
   _db = db;
@@ -115,6 +145,33 @@ export type Strategy = {
   feedback: string | null;
   created_at: number;
   completed_at: number | null;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  description: string;
+  created_at: number;
+};
+
+export type ProjectFile = {
+  id: string;
+  project_id: string;
+  name: string;
+  notes: string;
+  storage_path: string | null;
+  original_filename: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: number;
+};
+
+export type MentionType = "person" | "project" | "file";
+
+export type InteractionMention = {
+  interaction_id: string;
+  mention_type: MentionType;
+  target_id: string;
 };
 
 export type StrategyRow = {
@@ -221,6 +278,7 @@ export function createInteraction(input: {
   person_id?: string | null;
   content: string;
   project_context?: string;
+  mentions?: Array<{ type: MentionType; id: string }>;
 }): Interaction {
   const interaction: Interaction = {
     id: uuid(),
@@ -229,14 +287,42 @@ export function createInteraction(input: {
     project_context: input.project_context ?? "",
     created_at: Date.now(),
   };
-  getDb()
-    .prepare(
-      `INSERT INTO interactions
-       (id, person_id, content, project_context, created_at)
-       VALUES (@id, @person_id, @content, @project_context, @created_at)`
-    )
-    .run(interaction);
+  const db = getDb();
+  const insertInteraction = db.prepare(
+    `INSERT INTO interactions
+     (id, person_id, content, project_context, created_at)
+     VALUES (@id, @person_id, @content, @project_context, @created_at)`
+  );
+  const insertMention = db.prepare(
+    `INSERT OR IGNORE INTO interaction_mentions
+     (interaction_id, mention_type, target_id)
+     VALUES (?, ?, ?)`
+  );
+  const tx = db.transaction(() => {
+    insertInteraction.run(interaction);
+    if (input.person_id) {
+      insertMention.run(interaction.id, "person", input.person_id);
+    }
+    for (const m of input.mentions ?? []) {
+      insertMention.run(interaction.id, m.type, m.id);
+    }
+  });
+  tx();
   return interaction;
+}
+
+export function listInteractionMentions(): InteractionMention[] {
+  return getDb()
+    .prepare("SELECT * FROM interaction_mentions")
+    .all() as InteractionMention[];
+}
+
+export function listMentionsForInteraction(
+  interactionId: string
+): InteractionMention[] {
+  return getDb()
+    .prepare("SELECT * FROM interaction_mentions WHERE interaction_id = ?")
+    .all(interactionId) as InteractionMention[];
 }
 
 export function deleteInteraction(id: string): boolean {
@@ -378,4 +464,129 @@ export function listCompletedStrategies(limit = 20): Strategy[] {
     )
     .all(limit) as StrategyRow[];
   return rows.map(rowToStrategy);
+}
+
+// Projects
+
+export function listProjects(): Project[] {
+  return getDb()
+    .prepare("SELECT * FROM projects ORDER BY created_at DESC")
+    .all() as Project[];
+}
+
+export function getProject(id: string): Project | undefined {
+  return getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as
+    | Project
+    | undefined;
+}
+
+export function createProject(input: {
+  name: string;
+  description?: string;
+}): Project {
+  const project: Project = {
+    id: uuid(),
+    name: input.name,
+    description: input.description ?? "",
+    created_at: Date.now(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO projects (id, name, description, created_at)
+       VALUES (@id, @name, @description, @created_at)`
+    )
+    .run(project);
+  return project;
+}
+
+export function updateProject(
+  id: string,
+  patch: Partial<Omit<Project, "id" | "created_at">>
+): Project | undefined {
+  const existing = getProject(id);
+  if (!existing) return undefined;
+  const merged = { ...existing, ...patch, id };
+  getDb()
+    .prepare(
+      `UPDATE projects SET name = @name, description = @description WHERE id = @id`
+    )
+    .run(merged);
+  return merged;
+}
+
+export function deleteProject(id: string): boolean {
+  const info = getDb().prepare("DELETE FROM projects WHERE id = ?").run(id);
+  return info.changes > 0;
+}
+
+// Project files
+
+export function listProjectFiles(projectId: string): ProjectFile[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM project_files WHERE project_id = ? ORDER BY created_at DESC"
+    )
+    .all(projectId) as ProjectFile[];
+}
+
+export function listAllFiles(): ProjectFile[] {
+  return getDb()
+    .prepare("SELECT * FROM project_files ORDER BY created_at DESC")
+    .all() as ProjectFile[];
+}
+
+export function getProjectFile(id: string): ProjectFile | undefined {
+  return getDb()
+    .prepare("SELECT * FROM project_files WHERE id = ?")
+    .get(id) as ProjectFile | undefined;
+}
+
+export function createProjectFile(input: {
+  project_id: string;
+  name: string;
+  notes?: string;
+  storage_path?: string | null;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+}): ProjectFile {
+  const file: ProjectFile = {
+    id: uuid(),
+    project_id: input.project_id,
+    name: input.name,
+    notes: input.notes ?? "",
+    storage_path: input.storage_path ?? null,
+    original_filename: input.original_filename ?? null,
+    mime_type: input.mime_type ?? null,
+    size_bytes: input.size_bytes ?? null,
+    created_at: Date.now(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO project_files
+       (id, project_id, name, notes, storage_path, original_filename, mime_type, size_bytes, created_at)
+       VALUES (@id, @project_id, @name, @notes, @storage_path, @original_filename, @mime_type, @size_bytes, @created_at)`
+    )
+    .run(file);
+  return file;
+}
+
+export function updateProjectFile(
+  id: string,
+  patch: { name?: string; notes?: string }
+): ProjectFile | undefined {
+  const existing = getProjectFile(id);
+  if (!existing) return undefined;
+  const merged = { ...existing, ...patch };
+  getDb()
+    .prepare(`UPDATE project_files SET name = @name, notes = @notes WHERE id = @id`)
+    .run(merged);
+  return merged;
+}
+
+export function deleteProjectFile(id: string): ProjectFile | undefined {
+  const existing = getProjectFile(id);
+  if (!existing) return undefined;
+  getDb().prepare("DELETE FROM project_files WHERE id = ?").run(id);
+  return existing;
 }

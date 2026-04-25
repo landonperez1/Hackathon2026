@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import {
   createStrategy,
+  listAllFiles,
   listCompletedStrategies,
+  listInteractionMentions,
   listInteractions,
   listPeople,
+  listProjects,
   listStrategies,
 } from "@/lib/db";
 import { generateStrategies } from "@/lib/anthropic";
@@ -31,6 +34,9 @@ export async function POST(req: Request) {
       people: listPeople(),
       interactions: listInteractions(),
       completedStrategies: listCompletedStrategies(),
+      projects: listProjects(),
+      files: listAllFiles(),
+      mentions: listInteractionMentions(),
     });
     const strategy = createStrategy({
       project_description: description,

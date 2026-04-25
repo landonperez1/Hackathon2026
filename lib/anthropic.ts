@@ -3,7 +3,10 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type {
   Interaction,
+  InteractionMention,
   Person,
+  Project,
+  ProjectFile,
   Strategy,
   StrategyOption,
 } from "./db";
@@ -52,7 +55,10 @@ const workloadLabel = (w: number) =>
 function renderNetwork(
   people: Person[],
   interactions: Interaction[],
-  completedStrategies: Strategy[]
+  completedStrategies: Strategy[],
+  projects: Project[],
+  files: ProjectFile[],
+  mentions: InteractionMention[]
 ): string {
   const interactionsByPerson = new Map<string, Interaction[]>();
   for (const i of interactions) {
@@ -91,6 +97,72 @@ function renderNetwork(
           const ctx = r.project_context ? ` [${r.project_context}]` : "";
           lines.push(`  * ${date}${ctx}: ${r.content}`);
         }
+      }
+      lines.push("");
+    }
+  }
+
+  if (projects.length > 0) {
+    lines.push("# Projects\n");
+    for (const pr of projects) {
+      lines.push(`## ${pr.name}`);
+      lines.push(`- id: ${pr.id}`);
+      if (pr.description) lines.push(`- description: ${pr.description}`);
+      const projectFiles = files.filter((f) => f.project_id === pr.id);
+      if (projectFiles.length > 0) {
+        lines.push("- files:");
+        for (const f of projectFiles.slice(0, 20)) {
+          const notes = f.notes ? ` — ${f.notes.slice(0, 200)}` : "";
+          lines.push(`  * [${f.id}] ${f.name}${notes}`);
+        }
+      }
+      lines.push("");
+    }
+  }
+
+  if (mentions.length > 0) {
+    const personName = (id: string) =>
+      people.find((p) => p.id === id)?.name ?? "unknown";
+    const projectName = (id: string) =>
+      projects.find((p) => p.id === id)?.name ?? "unknown";
+    const fileName = (id: string) =>
+      files.find((f) => f.id === id)?.name ?? "unknown";
+    const labelFor = (type: string, id: string) =>
+      type === "person"
+        ? personName(id)
+        : type === "project"
+        ? projectName(id)
+        : fileName(id);
+
+    const byInteraction = new Map<string, InteractionMention[]>();
+    for (const m of mentions) {
+      const arr = byInteraction.get(m.interaction_id) ?? [];
+      arr.push(m);
+      byInteraction.set(m.interaction_id, arr);
+    }
+    const linkPairs = new Map<string, number>();
+    for (const group of byInteraction.values()) {
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const a = group[i];
+          const b = group[j];
+          const k1 = `${a.mention_type}:${a.target_id}`;
+          const k2 = `${b.mention_type}:${b.target_id}`;
+          const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+          linkPairs.set(key, (linkPairs.get(key) ?? 0) + 1);
+        }
+      }
+    }
+    if (linkPairs.size > 0) {
+      lines.push("# Mind-map links (from @mentions in interactions)\n");
+      const sorted = [...linkPairs.entries()].sort((a, b) => b[1] - a[1]);
+      for (const [key, count] of sorted.slice(0, 40)) {
+        const [left, right] = key.split("|");
+        const [lt, lid] = left.split(":");
+        const [rt, rid] = right.split(":");
+        lines.push(
+          `- ${lt}:${labelFor(lt, lid)}  ↔  ${rt}:${labelFor(rt, rid)}  (co-mentioned ${count}x)`
+        );
       }
       lines.push("");
     }
@@ -156,11 +228,17 @@ export async function generateStrategies(args: {
   people: Person[];
   interactions: Interaction[];
   completedStrategies: Strategy[];
+  projects: Project[];
+  files: ProjectFile[];
+  mentions: InteractionMention[];
 }): Promise<StrategyOption[]> {
   const networkContext = renderNetwork(
     args.people,
     args.interactions,
-    args.completedStrategies
+    args.completedStrategies,
+    args.projects,
+    args.files,
+    args.mentions
   );
 
   const response = await getClient().messages.parse({
