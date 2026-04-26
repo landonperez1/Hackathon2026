@@ -13,9 +13,10 @@
     "electron": "electron .",
     "electron:dev": "concurrently -k -n next,electron \"next dev -p 3737\" \"wait-on http://127.0.0.1:3737 && cross-env ELECTRON_DEV=1 electron .\"",
     "electron:start": "next build && electron .",
-    "package:win": "next build && electron-builder --win --x64 --arm64",
-    "package:win:portable": "next build && electron-builder --win portable --x64 --arm64",
-    "package:linux": "next build && electron-builder --linux"
+    "prepare-bundle": "node scripts/prepare-bundle.js",
+    "package:win": "next build && npm run prepare-bundle && electron-builder --win --x64 --arm64",
+    "package:win:portable": "next build && npm run prepare-bundle && electron-builder --win portable --x64 --arm64",
+    "package:linux": "next build && npm run prepare-bundle && electron-builder --linux"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
@@ -53,20 +54,8 @@
     ],
     "extraResources": [
       {
-        "from": ".next/standalone",
+        "from": "bundle",
         "to": "app"
-      },
-      {
-        "from": ".next/static",
-        "to": "app/.next/static"
-      },
-      {
-        "from": "public",
-        "to": "app/public"
-      },
-      {
-        "from": "node_modules/node-sqlite3-wasm/dist/node-sqlite3-wasm.wasm",
-        "to": "app/node_modules/node-sqlite3-wasm/dist/node-sqlite3-wasm.wasm"
       }
     ],
     "win": {

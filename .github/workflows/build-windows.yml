@@ -33,6 +33,29 @@ jobs:
       - name: Build Next.js (standalone)
         run: npm run build
 
+      - name: Inspect Next.js standalone bundle
+        shell: bash
+        run: |
+          echo "--- .next/standalone top-level ---"
+          ls -la .next/standalone || true
+          echo "--- .next/standalone/node_modules ---"
+          ls -la .next/standalone/node_modules || echo "(missing)"
+          echo "--- count ---"
+          if [ -d .next/standalone/node_modules ]; then
+            echo "node_modules entries: $(ls .next/standalone/node_modules | wc -l)"
+          fi
+
+      - name: Assemble runtime bundle
+        run: npm run prepare-bundle
+
+      - name: Inspect final bundle
+        shell: bash
+        run: |
+          echo "--- bundle top-level ---"
+          ls -la bundle | head -30
+          echo "--- bundle/node_modules count ---"
+          ls bundle/node_modules | wc -l
+
       - name: Package Windows installers (x64 + arm64)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
