@@ -52,12 +52,8 @@
       "electron/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "bundle",
-        "to": "app"
-      }
-    ],
+    "afterPack": "scripts/after-pack.js",
+    "extraResources": [],
     "win": {
       "target": [
         {
