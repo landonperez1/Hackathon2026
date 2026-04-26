@@ -61,6 +61,28 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64 --arm64 --publish never
 
+      - name: Inspect packed output (verify node_modules survived)
+        shell: bash
+        run: |
+          for unpacked in dist/win-unpacked dist/win-arm64-unpacked; do
+            if [ -d "$unpacked" ]; then
+              echo "--- $unpacked/resources/app ---"
+              ls -la "$unpacked/resources/app" 2>/dev/null || echo "(missing)"
+              if [ -d "$unpacked/resources/app/node_modules" ]; then
+                count=$(ls "$unpacked/resources/app/node_modules" | wc -l)
+                echo "node_modules entries in packed app: $count"
+                if [ "$count" -lt 10 ]; then
+                  echo "::error::Only $count modules in packed app/node_modules — electron-builder dropped most of the bundle. Failing the build to avoid shipping a broken installer."
+                  ls "$unpacked/resources/app/node_modules" || true
+                  exit 1
+                fi
+              else
+                echo "::error::resources/app/node_modules missing entirely from $unpacked"
+                exit 1
+              fi
+            fi
+          done
+
       - name: Upload installers as workflow artifacts
         uses: actions/upload-artifact@v4
         with:

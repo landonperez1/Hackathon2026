@@ -163,6 +163,23 @@ function main() {
     }
   }
 
+  // Replace the standalone's package.json (which Next.js copies verbatim from
+  // the project root, complete with devDependencies and an electron-builder
+  // `build` config) with a minimal one. Otherwise electron-builder treats
+  // bundle/ as a sibling npm project and runs its dev-dep pruning, which on
+  // Windows ends up deleting most of node_modules in the packaged app.
+  const minimalPkg = {
+    name: "projectmind-runtime",
+    version: "0.1.0",
+    private: true,
+    main: "server.js",
+  };
+  fs.writeFileSync(
+    path.join(BUNDLE, "package.json"),
+    JSON.stringify(minimalPkg, null, 2) + "\n"
+  );
+  console.log("prepare-bundle: replaced bundle/package.json with minimal manifest");
+
   const sizeMB = Math.round(getDirSize(BUNDLE) / (1024 * 1024));
   console.log(`prepare-bundle: bundle assembled (~${sizeMB} MB)`);
 }
