@@ -188,28 +188,39 @@ async function startServer(apiKey) {
     return;
   }
 
-  const standaloneDir = app.isPackaged
-    ? path.join(process.resourcesPath, "app")
-    : path.join(__dirname, "..", ".next", "standalone");
+  // Packaged layout (set up by scripts/after-pack.js):
+  //   resources/app.asar       — this launcher
+  //   resources/server/        — Next.js standalone bundle (server.js + node_modules + .next)
+  // Older builds put the bundle in resources/app/ alongside app.asar; fall back
+  // to that path so a fresh launcher running over a stale install still boots.
+  const candidateDirs = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, "server"),
+        path.join(process.resourcesPath, "app"),
+      ]
+    : [path.join(__dirname, "..", ".next", "standalone")];
+
+  const standaloneDir =
+    candidateDirs.find((d) => fs.existsSync(path.join(d, "server.js"))) ||
+    candidateDirs[0];
   const serverScript = path.join(standaloneDir, "server.js");
 
   log(`spawning server: script=${serverScript}`);
   log(`spawn cwd=${standaloneDir}`);
   log(`spawn execPath=${process.execPath}`);
 
-  // Inventory the bundle for debugging missing-module errors.
   try {
     const topLevel = fs.readdirSync(standaloneDir).sort();
-    log(`standalone top-level: ${topLevel.join(", ")}`);
+    log(`bundle top-level: ${topLevel.join(", ")}`);
     const nm = path.join(standaloneDir, "node_modules");
     if (fs.existsSync(nm)) {
       const mods = fs.readdirSync(nm).sort();
-      log(`standalone node_modules (${mods.length}): ${mods.join(", ")}`);
+      log(`bundle node_modules (${mods.length}): ${mods.join(", ")}`);
     } else {
-      log(`standalone node_modules MISSING at ${nm}`);
+      log(`bundle node_modules MISSING at ${nm}`);
     }
   } catch (e) {
-    log(`failed to inventory standalone dir: ${e.message}`);
+    log(`failed to inventory bundle dir: ${e.message}`);
   }
 
   if (!fs.existsSync(serverScript)) {

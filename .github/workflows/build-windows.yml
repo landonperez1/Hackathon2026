@@ -66,18 +66,30 @@ jobs:
         run: |
           for unpacked in dist/win-unpacked dist/win-arm64-unpacked; do
             if [ -d "$unpacked" ]; then
-              echo "--- $unpacked/resources/app ---"
-              ls -la "$unpacked/resources/app" 2>/dev/null || echo "(missing)"
-              if [ -d "$unpacked/resources/app/node_modules" ]; then
-                count=$(ls "$unpacked/resources/app/node_modules" | wc -l)
-                echo "node_modules entries in packed app: $count"
+              echo "--- $unpacked/resources ---"
+              ls -la "$unpacked/resources" 2>/dev/null || echo "(missing)"
+              echo "--- $unpacked/resources/server ---"
+              ls -la "$unpacked/resources/server" 2>/dev/null || echo "(missing)"
+              if [ -d "$unpacked/resources/server/node_modules" ]; then
+                count=$(ls "$unpacked/resources/server/node_modules" | wc -l)
+                echo "node_modules entries in packed server: $count"
                 if [ "$count" -lt 10 ]; then
-                  echo "::error::Only $count modules in packed app/node_modules — electron-builder dropped most of the bundle. Failing the build to avoid shipping a broken installer."
-                  ls "$unpacked/resources/app/node_modules" || true
+                  echo "::error::Only $count modules in packed server/node_modules — electron-builder dropped most of the bundle. Failing the build to avoid shipping a broken installer."
+                  ls "$unpacked/resources/server/node_modules" || true
+                  exit 1
+                fi
+                for required in next react react-dom node-sqlite3-wasm; do
+                  if [ ! -f "$unpacked/resources/server/node_modules/$required/package.json" ]; then
+                    echo "::error::Required module '$required' missing from packed server/node_modules in $unpacked"
+                    exit 1
+                  fi
+                done
+                if [ ! -f "$unpacked/resources/server/node_modules/node-sqlite3-wasm/dist/node-sqlite3-wasm.wasm" ]; then
+                  echo "::error::node-sqlite3-wasm.wasm missing from packed server in $unpacked"
                   exit 1
                 fi
               else
-                echo "::error::resources/app/node_modules missing entirely from $unpacked"
+                echo "::error::resources/server/node_modules missing entirely from $unpacked"
                 exit 1
               fi
             fi
