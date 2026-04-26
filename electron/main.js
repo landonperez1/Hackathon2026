@@ -146,7 +146,7 @@ function waitForServer(timeoutMs) {
     const tick = () => {
       attempts++;
       if (serverExitInfo) {
-        const tail = serverOutputBuffer.slice(-15).join("\n");
+        const tail = serverOutputBuffer.slice(-30).join("\n");
         return reject(
           new Error(
             `Server crashed before becoming ready (exit=${serverExitInfo.code}, signal=${serverExitInfo.signal}).\n\nLast output:\n${
@@ -162,7 +162,7 @@ function waitForServer(timeoutMs) {
       });
       req.on("error", () => {
         if (Date.now() - start > timeoutMs) {
-          const tail = serverOutputBuffer.slice(-15).join("\n");
+          const tail = serverOutputBuffer.slice(-30).join("\n");
           reject(
             new Error(
               `Timed out after ${Math.round(
@@ -197,6 +197,21 @@ async function startServer(apiKey) {
   log(`spawn cwd=${standaloneDir}`);
   log(`spawn execPath=${process.execPath}`);
 
+  // Inventory the bundle for debugging missing-module errors.
+  try {
+    const topLevel = fs.readdirSync(standaloneDir).sort();
+    log(`standalone top-level: ${topLevel.join(", ")}`);
+    const nm = path.join(standaloneDir, "node_modules");
+    if (fs.existsSync(nm)) {
+      const mods = fs.readdirSync(nm).sort();
+      log(`standalone node_modules (${mods.length}): ${mods.join(", ")}`);
+    } else {
+      log(`standalone node_modules MISSING at ${nm}`);
+    }
+  } catch (e) {
+    log(`failed to inventory standalone dir: ${e.message}`);
+  }
+
   if (!fs.existsSync(serverScript)) {
     throw new Error(
       `server.js not found at ${serverScript}.\nReinstall ProjectMind.`
@@ -217,6 +232,15 @@ async function startServer(apiKey) {
     );
   }
   log(`wasm ok: ${wasmPath}`);
+
+  // Pre-flight: confirm next module is present. Common failure on Windows portable.
+  const nextModulePath = path.join(standaloneDir, "node_modules", "next", "package.json");
+  if (!fs.existsSync(nextModulePath)) {
+    throw new Error(
+      `Required module 'next' is missing from the bundle: ${nextModulePath}\nReinstall ProjectMind.`
+    );
+  }
+  log(`next module ok: ${nextModulePath}`);
 
   serverProcess = spawn(process.execPath, [serverScript], {
     cwd: standaloneDir,

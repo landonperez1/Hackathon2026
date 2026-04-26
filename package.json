@@ -54,25 +54,15 @@
     "extraResources": [
       {
         "from": ".next/standalone",
-        "to": "app",
-        "filter": [
-          "**/*",
-          "**/*.wasm"
-        ]
+        "to": "app"
       },
       {
         "from": ".next/static",
-        "to": "app/.next/static",
-        "filter": [
-          "**/*"
-        ]
+        "to": "app/.next/static"
       },
       {
         "from": "public",
-        "to": "app/public",
-        "filter": [
-          "**/*"
-        ]
+        "to": "app/public"
       },
       {
         "from": "node_modules/node-sqlite3-wasm/dist/node-sqlite3-wasm.wasm",
@@ -95,8 +85,7 @@
             "arm64"
           ]
         }
-      ],
-      "artifactName": "ProjectMind-${version}-${arch}.${ext}"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -104,7 +93,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ProjectMind"
+      "shortcutName": "ProjectMind",
+      "artifactName": "ProjectMind-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "ProjectMind-Portable-${version}-${arch}.${ext}"
     },
     "linux": {
       "target": [
