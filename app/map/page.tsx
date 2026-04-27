@@ -46,17 +46,25 @@ export default function MapPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const safe = (url: string): Promise<Record<string, unknown>> =>
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}));
+
     async function load() {
-      const [locRes, shipRes, prjRes] = await Promise.all([
-        fetch("/api/locations").then((r) => r.json()),
-        fetch("/api/shipments").then((r) => r.json()),
-        fetch("/api/projects").then((r) => r.json()),
-      ]);
-      if (cancelled) return;
-      setLocations(locRes.locations ?? []);
-      setShipments(shipRes.shipments ?? []);
-      setProjects(prjRes.projects ?? []);
-      setLoading(false);
+      try {
+        const [locRes, shipRes, prjRes] = await Promise.all([
+          safe("/api/locations"),
+          safe("/api/shipments"),
+          safe("/api/projects"),
+        ]);
+        if (cancelled) return;
+        setLocations((locRes.locations as Location[]) ?? []);
+        setShipments((shipRes.shipments as Shipment[]) ?? []);
+        setProjects((prjRes.projects as Project[]) ?? []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
     load();
     return () => {

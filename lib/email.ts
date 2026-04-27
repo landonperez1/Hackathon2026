@@ -1,5 +1,7 @@
-import { ImapFlow } from "imapflow";
-import { simpleParser } from "mailparser";
+// IMAP + mailparser are heavy Node-only modules. We import them lazily inside
+// the functions that need them so a packaging issue with one of their
+// transitive deps can't blow up at module-load time and take down every API
+// route that happens to share the same lib bundle.
 import {
   type EmailAccount,
   type EmailMessage,
@@ -12,6 +14,9 @@ import {
   upsertEmailMessage,
 } from "./db";
 
+type ImapFlowCtor = typeof import("imapflow").ImapFlow;
+type ImapFlowInstance = InstanceType<ImapFlowCtor>;
+
 export type SyncResult = {
   fetched: number;
   newMessages: EmailMessage[];
@@ -23,10 +28,21 @@ function snippet(body: string, max = 240): string {
   return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
 }
 
+async function loadImapFlow(): Promise<ImapFlowCtor> {
+  const mod = await import("imapflow");
+  return mod.ImapFlow;
+}
+
+async function loadParser() {
+  const mod = await import("mailparser");
+  return mod.simpleParser;
+}
+
 async function withClient<T>(
   account: EmailAccount,
-  fn: (client: ImapFlow) => Promise<T>
+  fn: (client: ImapFlowInstance) => Promise<T>
 ): Promise<T> {
+  const ImapFlow = await loadImapFlow();
   const client = new ImapFlow({
     host: account.host,
     port: account.port,
@@ -54,6 +70,7 @@ export async function testConnection(account: {
   password: string;
   mailbox?: string;
 }): Promise<void> {
+  const ImapFlow = await loadImapFlow();
   const client = new ImapFlow({
     host: account.host,
     port: account.port,
@@ -82,6 +99,7 @@ export async function syncInbox(maxMessages = 30): Promise<SyncResult> {
   const newMessages: EmailMessage[] = [];
 
   try {
+    const simpleParser = await loadParser();
     await withClient(account, async (client) => {
       const lock = await client.getMailboxLock(account.mailbox || "INBOX");
       try {

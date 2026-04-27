@@ -13,7 +13,15 @@ const VALID_STATUSES = new Set<ShipmentStatus>([
 ]);
 
 export async function GET() {
-  return NextResponse.json({ shipments: listShipments() });
+  try {
+    return NextResponse.json({ shipments: listShipments() });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { shipments: [], error: message },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: Request) {

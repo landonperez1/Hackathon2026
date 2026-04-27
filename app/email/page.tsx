@@ -38,17 +38,25 @@ export default function EmailPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const safe = (url: string): Promise<Record<string, unknown>> =>
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}));
+
     async function load() {
-      const [acctRes, msgRes, prjRes] = await Promise.all([
-        fetch("/api/email/account").then((r) => r.json()),
-        fetch("/api/email/messages?limit=100").then((r) => r.json()),
-        fetch("/api/projects").then((r) => r.json()),
-      ]);
-      if (cancelled) return;
-      setAccount(acctRes.account ?? null);
-      setMessages(msgRes.messages ?? []);
-      setProjects(prjRes.projects ?? []);
-      setLoading(false);
+      try {
+        const [acctRes, msgRes, prjRes] = await Promise.all([
+          safe("/api/email/account"),
+          safe("/api/email/messages?limit=100"),
+          safe("/api/projects"),
+        ]);
+        if (cancelled) return;
+        setAccount((acctRes.account as AccountStatus | null) ?? null);
+        setMessages((msgRes.messages as EmailMessage[]) ?? []);
+        setProjects((prjRes.projects as Project[]) ?? []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
     load();
     return () => {

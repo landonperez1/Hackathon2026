@@ -25,15 +25,23 @@ export default function EmailDigest({ projects }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    const safe = (url: string): Promise<Record<string, unknown>> =>
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}));
+
     async function load() {
-      const [acctRes, msgRes] = await Promise.all([
-        fetch("/api/email/account").then((r) => r.json()),
-        fetch("/api/email/messages?limit=50").then((r) => r.json()),
-      ]);
-      if (cancelled) return;
-      setAccount(acctRes.account ?? null);
-      setMessages(msgRes.messages ?? []);
-      setLoading(false);
+      try {
+        const [acctRes, msgRes] = await Promise.all([
+          safe("/api/email/account"),
+          safe("/api/email/messages?limit=50"),
+        ]);
+        if (cancelled) return;
+        setAccount((acctRes.account as AccountStatus | null) ?? null);
+        setMessages((msgRes.messages as EmailMessage[]) ?? []);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
     load();
     return () => {

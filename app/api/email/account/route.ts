@@ -16,7 +16,12 @@ function strip(account: ReturnType<typeof getEmailAccount>) {
 }
 
 export async function GET() {
-  return NextResponse.json({ account: strip(getEmailAccount()) });
+  try {
+    return NextResponse.json({ account: strip(getEmailAccount()) });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ account: null, error: message }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {

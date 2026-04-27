@@ -15,11 +15,14 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     fetch("/api/projects")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : { projects: [] }))
       .then((d) => {
         setProjects(d.projects ?? []);
-        setLoading(false);
-      });
+      })
+      .catch(() => {
+        // ignore — keep going so the form is still usable
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   async function create() {

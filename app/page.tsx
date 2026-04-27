@@ -40,32 +40,43 @@ export default function Home() {
   const [booting, setBooting] = useState(true);
 
   useEffect(() => {
-    async function load() {
-      const [pRes, iRes, rRes, prjRes] = await Promise.all([
-        fetch("/api/people").then((r) => r.json()),
-        fetch("/api/interactions?include=mentions").then((r) => r.json()),
-        fetch("/api/relationships").then((r) => r.json()),
-        fetch("/api/projects").then((r) => r.json()),
-      ]);
-      setPeople(pRes.people ?? []);
-      setInteractions(iRes.interactions ?? []);
-      setMentions(iRes.mentions ?? []);
-      setRelationships(rRes.relationships ?? []);
-      const loadedProjects: Project[] = prjRes.projects ?? [];
-      setProjects(loadedProjects);
+    // Each fetch is independent — if one route 500s the others still populate
+    // the UI, and the spinner always clears. Returning {} on failure keeps the
+    // destructuring safe.
+    const safe = (url: string): Promise<Record<string, unknown>> =>
+      fetch(url)
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}));
 
-      if (loadedProjects.length > 0) {
-        const fileLists = await Promise.all(
-          loadedProjects.map((p) =>
-            fetch(`/api/projects/${p.id}/files`)
-              .then((r) => r.json())
-              .then((d) => d.files as ProjectFile[])
-              .catch(() => [] as ProjectFile[])
-          )
-        );
-        setFiles(fileLists.flat());
+    async function load() {
+      try {
+        const [pRes, iRes, rRes, prjRes] = await Promise.all([
+          safe("/api/people"),
+          safe("/api/interactions?include=mentions"),
+          safe("/api/relationships"),
+          safe("/api/projects"),
+        ]);
+        setPeople((pRes.people as Person[]) ?? []);
+        setInteractions((iRes.interactions as Interaction[]) ?? []);
+        setMentions((iRes.mentions as InteractionMention[]) ?? []);
+        setRelationships((rRes.relationships as Relationship[]) ?? []);
+        const loadedProjects: Project[] = (prjRes.projects as Project[]) ?? [];
+        setProjects(loadedProjects);
+
+        if (loadedProjects.length > 0) {
+          const fileLists = await Promise.all(
+            loadedProjects.map((p) =>
+              fetch(`/api/projects/${p.id}/files`)
+                .then((r) => (r.ok ? r.json() : { files: [] }))
+                .then((d) => (d.files as ProjectFile[]) ?? [])
+                .catch(() => [] as ProjectFile[])
+            )
+          );
+          setFiles(fileLists.flat());
+        }
+      } finally {
+        setBooting(false);
       }
-      setBooting(false);
     }
     load();
   }, []);
