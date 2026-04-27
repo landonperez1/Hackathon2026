@@ -8,4 +8,9 @@ export type {
   ProjectFile,
   InteractionMention,
   MentionType,
+  EmailAccount,
+  EmailMessage,
+  Location,
+  Shipment,
+  ShipmentStatus,
 } from "./db";

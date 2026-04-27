@@ -20,6 +20,16 @@ export default function AppHeader({ stats }: Props) {
       href: "/projects",
       match: (p) => p.startsWith("/projects"),
     },
+    {
+      label: "📬 Email",
+      href: "/email",
+      match: (p) => p.startsWith("/email"),
+    },
+    {
+      label: "🗺️ Map",
+      href: "/map",
+      match: (p) => p.startsWith("/map"),
+    },
   ];
 
   return (

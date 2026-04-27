@@ -273,3 +273,74 @@ export async function generateStrategies(args: {
   }
   return response.parsed_output.options;
 }
+
+const EmailTagSchema = z.object({
+  results: z.array(
+    z.object({
+      message_id: z.string(),
+      project_id: z.string().nullable(),
+      summary: z.string(),
+    })
+  ),
+});
+
+export async function summarizeEmails(args: {
+  messages: Array<{
+    id: string;
+    subject: string;
+    from_name: string;
+    from_address: string;
+    received_at: number;
+    body: string;
+  }>;
+  projects: Project[];
+}): Promise<Array<{ message_id: string; project_id: string | null; summary: string }>> {
+  if (args.messages.length === 0) return [];
+
+  const projectList = args.projects
+    .map((p) => `- id=${p.id}  name="${p.name}"  description="${p.description}"`)
+    .join("\n");
+
+  const emailDigest = args.messages
+    .map((m) => {
+      const date = new Date(m.received_at).toISOString().slice(0, 10);
+      const body = m.body.slice(0, 1500);
+      return `=== email id=${m.id} ===\nfrom: ${m.from_name} <${m.from_address}>\ndate: ${date}\nsubject: ${m.subject}\n\n${body}`;
+    })
+    .join("\n\n");
+
+  const response = await getClient().messages.parse({
+    model: MODEL,
+    max_tokens: 4000,
+    system: [
+      {
+        type: "text",
+        text: `You triage incoming email for a project manager. For each email, decide which (if any) of the user's projects it relates to and write a one-sentence summary focused on actions, decisions, deadlines, or status updates relevant to that project. If an email is unrelated to any project, set project_id to null and still write a one-sentence summary.
+
+Use exact project ids from the list — never invent new ones. Echo back every email_id you receive.`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: `Projects:\n${projectList || "(none)"}\n\nEmails to triage:\n\n${emailDigest}`,
+      },
+    ],
+    output_config: {
+      effort: "low",
+      format: zodOutputFormat(EmailTagSchema),
+    },
+  });
+
+  if (!response.parsed_output) {
+    throw new Error("Email triage model returned no parseable output");
+  }
+  // Defensively map by message_id so caller doesn't depend on order.
+  const projectIds = new Set(args.projects.map((p) => p.id));
+  return response.parsed_output.results.map((r) => ({
+    message_id: r.message_id,
+    project_id: r.project_id && projectIds.has(r.project_id) ? r.project_id : null,
+    summary: r.summary,
+  }));
+}

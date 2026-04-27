@@ -9,6 +9,7 @@ import PersonDetail from "@/components/PersonDetail";
 import PersonForm from "@/components/PersonForm";
 import InteractionLog from "@/components/InteractionLog";
 import StrategyPanel from "@/components/StrategyPanel";
+import EmailDigest from "@/components/EmailDigest";
 import type {
   Interaction,
   InteractionMention,
@@ -241,6 +242,9 @@ export default function Home() {
             />
           ) : (
             <div className="flex flex-col h-full">
+              <div className="p-3 border-b border-border-muted">
+                <EmailDigest projects={projects} />
+              </div>
               <div className="flex border-b border-border-muted">
                 <button
                   className={`flex-1 py-3 text-sm font-medium transition-colors ${

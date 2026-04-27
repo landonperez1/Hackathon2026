@@ -99,6 +99,76 @@ export function getDb(): InstanceType<typeof Database> {
     CREATE INDEX IF NOT EXISTS idx_strategies_created ON strategies(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
     CREATE INDEX IF NOT EXISTS idx_mentions_target ON interaction_mentions(mention_type, target_id);
+
+    -- Single-row table holding the user's IMAP connection. id is hard-coded to 1.
+    CREATE TABLE IF NOT EXISTS email_account (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      host TEXT NOT NULL,
+      port INTEGER NOT NULL DEFAULT 993,
+      secure INTEGER NOT NULL DEFAULT 1,
+      username TEXT NOT NULL,
+      password TEXT NOT NULL,
+      mailbox TEXT NOT NULL DEFAULT 'INBOX',
+      last_synced_at INTEGER,
+      last_error TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS email_messages (
+      id TEXT PRIMARY KEY,
+      uid INTEGER NOT NULL,
+      message_id TEXT,
+      subject TEXT NOT NULL DEFAULT '',
+      from_name TEXT NOT NULL DEFAULT '',
+      from_address TEXT NOT NULL DEFAULT '',
+      snippet TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
+      received_at INTEGER NOT NULL,
+      project_id TEXT,
+      summary TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_email_messages_received ON email_messages(received_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_email_messages_project ON email_messages(project_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_email_messages_uid ON email_messages(uid);
+
+    CREATE TABLE IF NOT EXISTS locations (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      label TEXT NOT NULL,
+      address TEXT NOT NULL DEFAULT '',
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'site',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_locations_project ON locations(project_id);
+
+    CREATE TABLE IF NOT EXISTS shipments (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      label TEXT NOT NULL,
+      cargo TEXT NOT NULL DEFAULT '',
+      origin_id TEXT NOT NULL,
+      destination_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      eta INTEGER,
+      progress REAL NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (origin_id) REFERENCES locations(id) ON DELETE CASCADE,
+      FOREIGN KEY (destination_id) REFERENCES locations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shipments_project ON shipments(project_id);
+    CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status);
   `);
 
   _db = db;
@@ -611,4 +681,371 @@ export function deleteProjectFile(id: string): ProjectFile | undefined {
   if (!existing) return undefined;
   getDb().prepare("DELETE FROM project_files WHERE id = ?").run([id]);
   return existing;
+}
+
+// Email
+
+export type EmailAccount = {
+  id: number;
+  host: string;
+  port: number;
+  secure: number;
+  username: string;
+  password: string;
+  mailbox: string;
+  last_synced_at: number | null;
+  last_error: string | null;
+  created_at: number;
+};
+
+export type EmailMessage = {
+  id: string;
+  uid: number;
+  message_id: string | null;
+  subject: string;
+  from_name: string;
+  from_address: string;
+  snippet: string;
+  body: string;
+  received_at: number;
+  project_id: string | null;
+  summary: string | null;
+  created_at: number;
+};
+
+export function getEmailAccount(): EmailAccount | undefined {
+  return getDb()
+    .prepare("SELECT * FROM email_account WHERE id = 1")
+    .get() as unknown as EmailAccount | undefined;
+}
+
+export function saveEmailAccount(input: {
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  password: string;
+  mailbox?: string;
+}): EmailAccount {
+  const row = {
+    id: 1,
+    host: input.host,
+    port: input.port,
+    secure: input.secure ? 1 : 0,
+    username: input.username,
+    password: input.password,
+    mailbox: input.mailbox ?? "INBOX",
+    last_synced_at: null,
+    last_error: null,
+    created_at: Date.now(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO email_account
+       (id, host, port, secure, username, password, mailbox, last_synced_at, last_error, created_at)
+       VALUES (@id, @host, @port, @secure, @username, @password, @mailbox, @last_synced_at, @last_error, @created_at)
+       ON CONFLICT(id) DO UPDATE SET
+         host = excluded.host,
+         port = excluded.port,
+         secure = excluded.secure,
+         username = excluded.username,
+         password = excluded.password,
+         mailbox = excluded.mailbox`
+    )
+    .run(bind(row as unknown as Record<string, unknown>));
+  return getEmailAccount() as EmailAccount;
+}
+
+export function deleteEmailAccount(): void {
+  const db = getDb();
+  db.run("DELETE FROM email_messages");
+  db.run("DELETE FROM email_account WHERE id = 1");
+}
+
+export function setEmailAccountStatus(
+  patch: { last_synced_at?: number | null; last_error?: string | null }
+): void {
+  const existing = getEmailAccount();
+  if (!existing) return;
+  const merged = { ...existing, ...patch };
+  getDb()
+    .prepare(
+      `UPDATE email_account SET last_synced_at = @last_synced_at, last_error = @last_error WHERE id = 1`
+    )
+    .run(bind(merged as unknown as Record<string, unknown>));
+}
+
+export function listEmailMessages(limit = 50): EmailMessage[] {
+  return getDb()
+    .prepare("SELECT * FROM email_messages ORDER BY received_at DESC LIMIT ?")
+    .all([limit]) as unknown as EmailMessage[];
+}
+
+export function listEmailMessagesForProject(
+  projectId: string,
+  limit = 30
+): EmailMessage[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM email_messages WHERE project_id = ? ORDER BY received_at DESC LIMIT ?"
+    )
+    .all([projectId, limit]) as unknown as EmailMessage[];
+}
+
+export function getMaxEmailUid(): number {
+  const row = getDb()
+    .prepare("SELECT MAX(uid) as max_uid FROM email_messages")
+    .get() as unknown as { max_uid: number | null } | undefined;
+  return row?.max_uid ?? 0;
+}
+
+export function upsertEmailMessage(input: {
+  uid: number;
+  message_id: string | null;
+  subject: string;
+  from_name: string;
+  from_address: string;
+  snippet: string;
+  body: string;
+  received_at: number;
+}): EmailMessage {
+  const row = {
+    id: uuid(),
+    uid: input.uid,
+    message_id: input.message_id,
+    subject: input.subject,
+    from_name: input.from_name,
+    from_address: input.from_address,
+    snippet: input.snippet,
+    body: input.body,
+    received_at: input.received_at,
+    project_id: null as string | null,
+    summary: null as string | null,
+    created_at: Date.now(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO email_messages
+       (id, uid, message_id, subject, from_name, from_address, snippet, body, received_at, project_id, summary, created_at)
+       VALUES (@id, @uid, @message_id, @subject, @from_name, @from_address, @snippet, @body, @received_at, @project_id, @summary, @created_at)
+       ON CONFLICT(uid) DO UPDATE SET
+         subject = excluded.subject,
+         from_name = excluded.from_name,
+         from_address = excluded.from_address,
+         snippet = excluded.snippet,
+         body = excluded.body,
+         received_at = excluded.received_at`
+    )
+    .run(bind(row as unknown as Record<string, unknown>));
+  return getDb()
+    .prepare("SELECT * FROM email_messages WHERE uid = ?")
+    .get([input.uid]) as unknown as EmailMessage;
+}
+
+export function setEmailMessageSummary(
+  id: string,
+  summary: string | null,
+  projectId: string | null
+): void {
+  getDb()
+    .prepare(
+      "UPDATE email_messages SET summary = ?, project_id = ? WHERE id = ?"
+    )
+    .run([summary, projectId, id]);
+}
+
+export function listUnsummarizedEmails(limit = 25): EmailMessage[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM email_messages WHERE summary IS NULL ORDER BY received_at DESC LIMIT ?"
+    )
+    .all([limit]) as unknown as EmailMessage[];
+}
+
+// Locations
+
+export type Location = {
+  id: string;
+  project_id: string | null;
+  label: string;
+  address: string;
+  lat: number;
+  lng: number;
+  kind: string;
+  notes: string;
+  created_at: number;
+};
+
+export function listLocations(): Location[] {
+  return getDb()
+    .prepare("SELECT * FROM locations ORDER BY created_at DESC")
+    .all() as unknown as Location[];
+}
+
+export function getLocation(id: string): Location | undefined {
+  return getDb()
+    .prepare("SELECT * FROM locations WHERE id = ?")
+    .get([id]) as unknown as Location | undefined;
+}
+
+export function createLocation(input: {
+  project_id?: string | null;
+  label: string;
+  address?: string;
+  lat: number;
+  lng: number;
+  kind?: string;
+  notes?: string;
+}): Location {
+  const loc: Location = {
+    id: uuid(),
+    project_id: input.project_id ?? null,
+    label: input.label,
+    address: input.address ?? "",
+    lat: input.lat,
+    lng: input.lng,
+    kind: input.kind ?? "site",
+    notes: input.notes ?? "",
+    created_at: Date.now(),
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO locations
+       (id, project_id, label, address, lat, lng, kind, notes, created_at)
+       VALUES (@id, @project_id, @label, @address, @lat, @lng, @kind, @notes, @created_at)`
+    )
+    .run(bind(loc as unknown as Record<string, unknown>));
+  return loc;
+}
+
+export function updateLocation(
+  id: string,
+  patch: Partial<Omit<Location, "id" | "created_at">>
+): Location | undefined {
+  const existing = getLocation(id);
+  if (!existing) return undefined;
+  const merged = { ...existing, ...patch, id };
+  getDb()
+    .prepare(
+      `UPDATE locations SET
+         project_id = @project_id,
+         label = @label,
+         address = @address,
+         lat = @lat,
+         lng = @lng,
+         kind = @kind,
+         notes = @notes
+       WHERE id = @id`
+    )
+    .run(bind(merged as unknown as Record<string, unknown>));
+  return merged;
+}
+
+export function deleteLocation(id: string): boolean {
+  const info = getDb().prepare("DELETE FROM locations WHERE id = ?").run([id]);
+  return info.changes > 0;
+}
+
+// Shipments
+
+export type ShipmentStatus =
+  | "scheduled"
+  | "loading"
+  | "in_transit"
+  | "delivered"
+  | "delayed"
+  | "cancelled";
+
+export type Shipment = {
+  id: string;
+  project_id: string | null;
+  label: string;
+  cargo: string;
+  origin_id: string;
+  destination_id: string;
+  status: ShipmentStatus;
+  eta: number | null;
+  progress: number;
+  notes: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export function listShipments(): Shipment[] {
+  return getDb()
+    .prepare("SELECT * FROM shipments ORDER BY created_at DESC")
+    .all() as unknown as Shipment[];
+}
+
+export function getShipment(id: string): Shipment | undefined {
+  return getDb()
+    .prepare("SELECT * FROM shipments WHERE id = ?")
+    .get([id]) as unknown as Shipment | undefined;
+}
+
+export function createShipment(input: {
+  project_id?: string | null;
+  label: string;
+  cargo?: string;
+  origin_id: string;
+  destination_id: string;
+  status?: ShipmentStatus;
+  eta?: number | null;
+  progress?: number;
+  notes?: string;
+}): Shipment {
+  const now = Date.now();
+  const ship: Shipment = {
+    id: uuid(),
+    project_id: input.project_id ?? null,
+    label: input.label,
+    cargo: input.cargo ?? "",
+    origin_id: input.origin_id,
+    destination_id: input.destination_id,
+    status: input.status ?? "scheduled",
+    eta: input.eta ?? null,
+    progress: input.progress ?? 0,
+    notes: input.notes ?? "",
+    created_at: now,
+    updated_at: now,
+  };
+  getDb()
+    .prepare(
+      `INSERT INTO shipments
+       (id, project_id, label, cargo, origin_id, destination_id, status, eta, progress, notes, created_at, updated_at)
+       VALUES (@id, @project_id, @label, @cargo, @origin_id, @destination_id, @status, @eta, @progress, @notes, @created_at, @updated_at)`
+    )
+    .run(bind(ship as unknown as Record<string, unknown>));
+  return ship;
+}
+
+export function updateShipment(
+  id: string,
+  patch: Partial<Omit<Shipment, "id" | "created_at" | "updated_at">>
+): Shipment | undefined {
+  const existing = getShipment(id);
+  if (!existing) return undefined;
+  const merged = { ...existing, ...patch, id, updated_at: Date.now() };
+  getDb()
+    .prepare(
+      `UPDATE shipments SET
+         project_id = @project_id,
+         label = @label,
+         cargo = @cargo,
+         origin_id = @origin_id,
+         destination_id = @destination_id,
+         status = @status,
+         eta = @eta,
+         progress = @progress,
+         notes = @notes,
+         updated_at = @updated_at
+       WHERE id = @id`
+    )
+    .run(bind(merged as unknown as Record<string, unknown>));
+  return merged;
+}
+
+export function deleteShipment(id: string): boolean {
+  const info = getDb().prepare("DELETE FROM shipments WHERE id = ?").run([id]);
+  return info.changes > 0;
 }

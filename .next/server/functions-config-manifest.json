@@ -1,1 +1,0 @@
-{"version":1,"functions":{"/api/files/[fileId]/download":{},"/api/interactions/[id]":{},"/api/interactions":{},"/api/people/[id]":{},"/api/people":{},"/api/projects":{},"/api/relationships":{},"/api/strategies/[id]/rate":{},"/api/strategies/[id]":{},"/api/projects/[id]/files/[fileId]":{},"/api/strategies":{"maxDuration":300},"/api/projects/[id]":{},"/api/projects/[id]/files":{}}}

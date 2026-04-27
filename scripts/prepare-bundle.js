@@ -26,6 +26,8 @@ const REQUIRED_RUNTIME_MODULES = [
   "react",
   "react-dom",
   "node-sqlite3-wasm",
+  "imapflow",
+  "mailparser",
 ];
 
 function rmrf(p) {
